@@ -83,7 +83,7 @@ jobs:
     - name: Build device tree
       run: |
         cd ${{ env.KERNEL_DIR }}
-        make dtbs -j$(nproc) 2>&1 | tee ${{ env.OUTPUT_DIR }}/build.log || true
+        make dtbs -j$(nproc) 2>&1 | tee ${{ env.OUTPUT_DIR }}/build.log
 
     - name: Build kernel image
       run: |
@@ -94,6 +94,17 @@ jobs:
       run: |
         cd ${{ env.KERNEL_DIR }}
         make modules -j$(nproc) 2>&1 | tee -a ${{ env.OUTPUT_DIR }}/build.log
+        if [ ! -f modules.order ]; then
+          echo "Warning: modules.order not found, checking for built modules..."
+          find . -name "*.ko" -type f > /tmp/modules_check.txt || true
+          if [ -s /tmp/modules_check.txt ]; then
+            echo "Found modules:"
+            cat /tmp/modules_check.txt
+          else
+            echo "Error: No modules found after compilation"
+            exit 1
+          fi
+        fi
 
     - name: Build DSA drivers
       run: |
