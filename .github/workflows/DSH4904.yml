@@ -47,13 +47,27 @@ jobs:
           g++-aarch64-linux-gnu \
           binutils-aarch64-linux-gnu \
           libc6-dev-arm64-cross \
-          bc \
-          libssl-dev \
           build-essential \
+          make \
+          git \
+          bc \
+          python3 \
+          python \
           flex \
           bison \
           pahole \
-          libncurses-dev
+          libncurses-dev \
+          libssl-dev \
+          libelf-dev \
+          zlib1g-dev \
+          liblzma-dev \
+          libncurses5-dev \
+          lib32stdc++6 \
+          cpio \
+          rsync \
+          kmod \
+          ccache \
+          pkg-config
 
     - name: Set up toolchain
       run: |
