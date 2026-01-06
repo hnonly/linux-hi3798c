@@ -70,6 +70,7 @@ jobs:
 
     - name: Set up toolchain
       run: |
+        echo "ARCH=arm64" >> $GITHUB_ENV
         echo "AARCH64_GCC_PREFIX=aarch64-linux-gnu-" >> $GITHUB_ENV
         echo "PATH=$PATH:/usr/aarch64-linux-gnu/bin" >> $GITHUB_ENV
         aarch64-linux-gnu-gcc --version
@@ -80,12 +81,16 @@ jobs:
     - name: Clean previous build
       run: |
         cd ${{ env.KERNEL_DIR }}
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
         make distclean 2>/dev/null || true
         make mrproper 2>/dev/null || true
 
     - name: Configure kernel
       run: |
         cd ${{ env.KERNEL_DIR }}
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
         make defconfig
         scripts/config -e CONFIG_NET_DSA
         scripts/config -e CONFIG_NET_DSA_REALTEK_SMI
@@ -96,16 +101,22 @@ jobs:
     - name: Build device tree
       run: |
         cd ${{ env.KERNEL_DIR }}
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
         make dtbs -j$(nproc) 2>&1 | tee ${{ env.OUTPUT_DIR }}/build.log
 
     - name: Build kernel image
       run: |
         cd ${{ env.KERNEL_DIR }}
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
         make Image -j$(nproc) 2>&1 | tee -a ${{ env.OUTPUT_DIR }}/build.log
 
     - name: Build kernel modules
       run: |
         cd ${{ env.KERNEL_DIR }}
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
         make modules -j$(nproc) 2>&1 | tee -a ${{ env.OUTPUT_DIR }}/build.log
         if [ ! -f modules.order ]; then
           echo "Warning: modules.order not found, checking for built modules..."
@@ -122,11 +133,15 @@ jobs:
     - name: Build DSA drivers
       run: |
         cd ${{ env.KERNEL_DIR }}/drivers/net/dsa
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
         make -C ${{ env.KERNEL_DIR }} M=${{ env.KERNEL_DIR }}/drivers/net/dsa modules 2>&1 | tee -a ${{ env.OUTPUT_DIR }}/build.log
 
     - name: Install modules to staging directory
       run: |
         cd ${{ env.KERNEL_DIR }}
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
         make INSTALL_MOD_PATH=${{ env.OUTPUT_DIR }}/modules modules_install
 
     - name: Copy build artifacts
