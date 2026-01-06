@@ -52,7 +52,6 @@ jobs:
           git \
           bc \
           python3 \
-          python \
           flex \
           bison \
           pahole \
