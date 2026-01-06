@@ -1,0 +1,180 @@
+name: DSH4904 Kernel Build & Release
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+    paths:
+      - 'rtl8367n.c'
+      - 'drivers/net/dsa/**'
+      - 'build.sh'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  KERNEL_DIR: ${{ github.workspace }}/linux-5.10
+  OUTPUT_DIR: ${{ github.workspace }}/build_output
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: Get version info
+      id: version
+      run: |
+        if [[ ${{ github.ref }} =~ ^refs/tags/v ]]; then
+          VERSION=${GITHUB_REF#refs/tags/v}
+        else
+          VERSION="dev-$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          gcc-aarch64-linux-gnu \
+          g++-aarch64-linux-gnu \
+          binutils-aarch64-linux-gnu \
+          libc6-dev-arm64-cross \
+          bc \
+          libssl-dev \
+          build-essential \
+          flex \
+          bison \
+          pahole \
+          libncurses-dev
+
+    - name: Set up toolchain
+      run: |
+        echo "AARCH64_GCC_PREFIX=aarch64-linux-gnu-" >> $GITHUB_ENV
+        echo "PATH=$PATH:/usr/aarch64-linux-gnu/bin" >> $GITHUB_ENV
+        aarch64-linux-gnu-gcc --version
+
+    - name: Create output directory
+      run: mkdir -p ${{ env.OUTPUT_DIR }}
+
+    - name: Clean previous build
+      run: |
+        cd ${{ env.KERNEL_DIR }}
+        make distclean 2>/dev/null || true
+        make mrproper 2>/dev/null || true
+
+    - name: Configure kernel
+      run: |
+        cd ${{ env.KERNEL_DIR }}
+        make defconfig
+        scripts/config -e CONFIG_NET_DSA
+        scripts/config -e CONFIG_NET_DSA_REALTEK_SMI
+        scripts/config -e CONFIG_NET_VENDOR_REALTEK
+        scripts/config -e CONFIG_REALTEK_PHY
+        scripts/config -e CONFIG_NET_DSA_TAG_RTL4_A
+
+    - name: Build device tree
+      run: |
+        cd ${{ env.KERNEL_DIR }}
+        make dtbs -j$(nproc) 2>&1 | tee ${{ env.OUTPUT_DIR }}/build.log || true
+
+    - name: Build kernel image
+      run: |
+        cd ${{ env.KERNEL_DIR }}
+        make Image -j$(nproc) 2>&1 | tee -a ${{ env.OUTPUT_DIR }}/build.log
+
+    - name: Build kernel modules
+      run: |
+        cd ${{ env.KERNEL_DIR }}
+        make modules -j$(nproc) 2>&1 | tee -a ${{ env.OUTPUT_DIR }}/build.log
+
+    - name: Build DSA drivers
+      run: |
+        cd ${{ env.KERNEL_DIR }}/drivers/net/dsa
+        make -C ${{ env.KERNEL_DIR }} M=${{ env.KERNEL_DIR }}/drivers/net/dsa modules 2>&1 | tee -a ${{ env.OUTPUT_DIR }}/build.log
+
+    - name: Install modules to staging directory
+      run: |
+        cd ${{ env.KERNEL_DIR }}
+        make INSTALL_MOD_PATH=${{ env.OUTPUT_DIR }}/modules modules_install
+
+    - name: Copy build artifacts
+      run: |
+        cp ${{ env.KERNEL_DIR }}/arch/arm64/boot/Image ${{ env.OUTPUT_DIR }}/
+        cp ${{ env.KERNEL_DIR }}/arch/arm64/boot/dts/hisilicon/hi3798cv200*.dtb ${{ env.OUTPUT_DIR }}/
+        cp ${{ env.KERNEL_DIR }}/drivers/net/dsa/*.ko ${{ env.OUTPUT_DIR }}/ 2>/dev/null || true
+
+        # Create release package structure
+        mkdir -p ${{ env.OUTPUT_DIR }}/dsh4904/{boot,modules}
+        cp ${{ env.OUTPUT_DIR }}/Image ${{ env.OUTPUT_DIR }}/dsh4904/boot/
+        cp ${{ env.KERNEL_DIR }}/arch/arm64/boot/dts/hisilicon/*.dtb ${{ env.OUTPUT_DIR }}/dsh4904/boot/
+        cp -r ${{ env.OUTPUT_DIR }}/modules/lib/modules/5.10.36 ${{ env.OUTPUT_DIR }}/dsh4904/modules/
+
+        # Create checksums
+        cd ${{ env.OUTPUT_DIR }}
+        find . -type f -name "*.ko" -o -name "Image" -o -name "*.dtb" | xargs sha256sum > SHA256SUMS.txt
+
+    - name: Create release archive
+      run: |
+        cd ${{ env.OUTPUT_DIR }}
+        tar -czf dsh4904-kernel-${{ steps.version.outputs.VERSION }}.tar.gz dsh4904/
+        tar -czf modules-${{ steps.version.outputs.VERSION }}.tar.gz modules/
+
+    - name: Upload release artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dsh4904-release-${{ steps.version.outputs.VERSION }}
+        path: |
+          ${{ env.OUTPUT_DIR }}/*.tar.gz
+          ${{ env.OUTPUT_DIR }}/SHA256SUMS.txt
+        retention-days: 30
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          ${{ env.OUTPUT_DIR }}/*.tar.gz
+          ${{ env.OUTPUT_DIR }}/SHA256SUMS.txt
+        name: Release ${{ steps.version.outputs.VERSION }}
+        tag_name: ${{ github.ref_name }}
+        body: |
+          ## DSH4904 Kernel Release ${{ steps.version.outputs.VERSION }}
+
+          ### Contents
+          - `dsh4904-kernel-*.tar.gz` - Kernel image and device tree
+          - `modules-*.tar.gz` - Kernel modules
+          - `SHA256SUMS.txt` - Checksums for verification
+
+          ### Installation
+          1. Extract and copy files to DSH4904
+          2. Kernel image → /boot/Image
+          3. DTB → /boot/hi3798cv200-dsh4904.dtb
+          4. Modules → /lib/modules/5.10.36/
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build summary
+      if: always()
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "Build Summary"
+        echo "=========================================="
+        echo "Version: ${{ steps.version.outputs.VERSION }}"
+        echo "Status: ${{ job.status }}"
+        echo ""
+        echo "Artifacts:"
+        ls -lh ${{ env.OUTPUT_DIR }}/*.tar.gz 2>/dev/null || echo "No archives found"
+        echo ""
+        echo "Kernel modules:"
+        ls -lh ${{ env.OUTPUT_DIR }}/*.ko 2>/dev/null || echo "No modules found"
